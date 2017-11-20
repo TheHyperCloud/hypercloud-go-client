@@ -22,18 +22,26 @@ type hypercloud struct{
     client          *http.Client
 }
 
-func NewHypercloud(url string, access string, secret string) hypercloud {
+func ToHypercloud(data interface{}) hypercloud {
+    return data.(hypercloud)
+}
+
+func NewHypercloud(url string, access string, secret string) (hc hypercloud, erro []error) {
     var ret = hypercloud{access, secret, url, nil, nil}
     ret.access = access
     ret.secret = secret
     ret.client = &http.Client{
         Timeout : 25 * time.Second,
     }
-    ret.generateToken()
-    return ret
+    err := ret.generateToken()
+    if err != nil {
+        erro = append(erro, err)
+    }
+    hc = ret
+    return
 }
 
-func (h* hypercloud) Request(method string, url string, data interface{}) (rVal interface{}, err []string){
+func (h* hypercloud) Request(method string, url string, data interface{}) (rVal interface{}, err []error){
     //Normalize method
     method = strings.ToUpper(method)
     json, body, status := h._request(method, url, data)
@@ -46,21 +54,16 @@ func (h* hypercloud) Request(method string, url string, data interface{}) (rVal 
         err = nil
         return
     } else if status == 401 {
-        err = append(err, "Authentication error")
-        err = append(err, body)
+        err = append(err, fmt.Errorf("Authentication error: %s", body))
         return
     } else if status == 403 {
-        err = append(err, "Unauthorized error")
-        err = append(err, body)
+        err = append(err, fmt.Errorf("Unauthorized error: %s", body))
     } else if status == 400 || status == 404 {
-        err = append(err, "Invalid request error")
-        err = append(err, body)
+        err = append(err, fmt.Errorf("Invalid request error: %s", body))
     } else if status == 422 {
-        err = append(err, "Validation error")
-        err = append(err, body)
+        err = append(err, fmt.Errorf("Validation error: %s", body))
     } else {
-        err = append(err, fmt.Sprintf("API Error: %s", strconv.Itoa(status)))
-        err = append(err, body)
+        err = append(err, fmt.Errorf("API Error: %s \n%s", strconv.Itoa(status), body))
     }
     return
 }
@@ -125,7 +128,7 @@ func (h* hypercloud) _request(method string, url string, data interface{}) (json
     return
 }
 
-func (h* hypercloud) generateToken() {
+func (h* hypercloud) generateToken() error {
     h.tokenCache = nil
     login_url := strings.Join([]string{h.baseUrl, "/oauth/token"}, "")
     var invalid map[string]interface{}
@@ -139,14 +142,14 @@ func (h* hypercloud) generateToken() {
 
     if err != nil {
         h.tokenCache = invalid
-        return
+        return fmt.Errorf("Failed to create the request: %s", err.Error())
     }
 
     login_response, err := h.client.Do(req)
 
     if err != nil {
         h.tokenCache = invalid
-        return
+        return fmt.Errorf("Failed to do the request: %s", err.Error())
     }
 
     defer login_response.Body.Close()
@@ -154,20 +157,20 @@ func (h* hypercloud) generateToken() {
 
     if err != nil {
         h.tokenCache = invalid
-        return
+        return fmt.Errorf("Failed to read all from the login response's body: %s", err.Error())
     }
 
     var rVal map[string]interface{}
     err = Json.Unmarshal(body, &rVal)
     if err != nil {
         h.tokenCache = invalid
-        return
+        return fmt.Errorf("Failed to unmarshal reply data")
     }
     if rVal["access_token"] == nil || len(rVal["access_token"].(string)) != 64 {
         h.tokenCache = invalid
-        return
+        return fmt.Errorf("Access token returned is of invalid length")
     }
     h.tokenCache = rVal
     h.tokenCache["expires"] = time.Now().Unix() + int64(h.tokenCache["expires_in"].(float64))-60 //Anti-time-skew thingy
-    return
+    return nil
 }
