@@ -168,7 +168,7 @@ func (h* hypercloud) generateToken() error {
     }
     if rVal["access_token"] == nil || len(rVal["access_token"].(string)) != 64 {
         h.tokenCache = invalid
-        return fmt.Errorf("Access token returned is of invalid length")
+        return fmt.Errorf("Invalid token (incorrect credentials?)")
     }
     h.tokenCache = rVal
     h.tokenCache["expires"] = time.Now().Unix() + int64(h.tokenCache["expires_in"].(float64))-60 //Anti-time-skew thingy
