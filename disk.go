@@ -25,8 +25,16 @@ func (h* hypercloud) DiskList() (ret interface{}, err []error) {
     return
 }
 
+//Adding resize to this as well
 func (h* hypercloud) DiskUpdate(diskId string, body interface{}) (ret interface{}, err []error) {
-    ret, err =  h.Request("PUT", "/disks/" + diskId, body)
+    dat := body.(map[string]interface{})
+    if val, ok := dat["size"]; val {
+        _, erro = h.DiskResize(diskSize, map[string]interface{}{"size": val})
+        if erro != nil {
+            err = append(err, erro...)
+        }
+    }
+    ret, err =  h.Request("PUT", "/disks/" + diskId, dat)
     return
 }
 

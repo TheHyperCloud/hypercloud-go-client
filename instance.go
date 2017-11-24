@@ -37,36 +37,28 @@ func (h* hypercloud) InstanceUpdate(instanceId string, body interface{}) (ret in
     if val, ok := dat["availability_groups"]; ok {
         _, erro := h.InstanceUpdateHighAvailability(instanceId, map[string]interface{}{"availability_groups" : val})
         if erro != nil {
-            for _, i := range erro{
-                err = append(err, i)
-            }
+            err = append(err, erro...)
         }
         delete(dat, "availability_groups")
     }
     if val, ok := dat["disks"]; ok {
         _, erro := h.InstanceUpdateDisks(instanceId, map[string]interface{}{"disks" : val})
         if erro != nil {
-            for _, i := range erro{
-                err = append(err, i)
-            }
+            err = append(err, erro...)
         }
         delete(dat, "disks")
     }
     if val, ok := dat["network_adapters"]; ok {
         _, erro := h.InstanceUpdateNetworking(instanceId, map[string]interface{}{"network_adapters" : val})
         if erro != nil {
-            for _, i := range erro{
-                err = append(err, i)
-            }
+            err = append(err, erro...)
         }
         delete(dat, "network_adapters")
     }
     if val, ok := dat["public_keys"]; ok {
         _, erro := h.InstanceUpdatePublicKeys(instanceId, map[string]interface{}{"public_keys" : val})
         if erro != nil {
-            for _, i := range erro{
-                err = append(err, i)
-            }
+            err = append(err, erro...)
         }
         delete(dat, "public_keys")
     }
