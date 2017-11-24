@@ -53,7 +53,8 @@ func TestHypercloud(t *testing.T){
     //Get all regions, find the Sydney (SY3) region.
     regions, errs := hc.RegionList()
     if errs != nil {
-        t.Fatalf("Error occurred in getting RegionList: \n%v", errs)
+        t.Logf("Error occurred in getting RegionList: \n%v", errs)
+        t.FailNow()
     }
 
     var mRegion string
@@ -68,7 +69,8 @@ func TestHypercloud(t *testing.T){
     }
 
     if mRegion == nil {
-        t.Fatalf("Failed to get the region id for SY3")
+        t.Logf("Failed to get the region id for SY3")
+        t.FailNow()
     }
 
     // Lets grab the Standard performance tier for disks and instances in the SY3 region
@@ -77,61 +79,147 @@ func TestHypercloud(t *testing.T){
 
     instanceTiers, err := hc.PerformanceTierListInstances()
     if err != nil {
-        t.Fatalf("Error occurred in getting PerformanceTierListInstances: \n%v", errs)
+        t.Logf("Error occurred in getting PerformanceTierListInstances: \n%v", errs)
+        t.FailNow()
     }
 
     for _, its := range instanceTiers.([]interface{}) {
-        if its.(map[string]interface{})["region"].(map[string]interface{})["id"].(string) == mRegion && its.(map[string]interface{})["name"] == "Standard" {
+        if its.(map[string]interface{})["region"].(map[string]interface{})["id"].(string) == mRegion && its.(map[string]interface{})["name"].(string) == "Standard" {
             mInstanceTier = its.(map[string]interface{})["id"].(string)
             break
         }
     }
 
     if mInstanceTier == nil {
-        t.Fatalf("Failed to get the standard instance tier id for SY3")
+        t.Logf("Failed to get the standard instance tier id for SY3")
+        t.FailNow()
     }
 
     diskTiers, err := hc.PerformanceTierListDisks()
     if err != nil {
-        t.Fatalf("Error occurred in getting PerformanceTierListDisks: \n%v", errs)
+        t.Logf("Error occurred in getting PerformanceTierListDisks: \n%v", errs)
+        t.FailNow()
     }
 
     for _, dts := range diskTiers.([]interface{}) {
-        if dts.(map[string]interface{})["region"].(map[string]interface{})["id"].(string) = mRegion && dts.(map[string]interface{})["name"] == "Standard" {
-            mDiskTier = dts.(map[string]interface{})["id"].string()
+        if dts.(map[string]interface{})["region"].(map[string]interface{})["id"].(string) = mRegion && dts.(map[string]interface{})["name"].(string) == "Standard" {
+            mDiskTier = dts.(map[string]interface{})["id"].(string)
             break
         }
     }
 
     if mDiskTier == nil {
-        t.Fatalf("Failed to get the standard disk tier id for SY3")
+        t.Logf("Failed to get the standard disk tier id for SY3")
+        t.FailNow()
     }
 
     // Make a blank 10G disk of specified performance tier
+    var mDisk string
     diskMap = make(map[string]interface{})
     diskMap["name"] = "hypercloud-test-disk"
     diskMap["performance_tier"] = mDiskTier
     diskMap["region"] = mRegion
     diskMap["size"] = 10
-    newDisk, err = hc.DiskCreate(diskMap)
+    newDisk, err := hc.DiskCreate(diskMap)
     if err != nil {
-        t.Fatalf("Failed to create new disk: \n%v", errs)
+        t.Logf("Failed to create new disk: \n%v", errs)
+        t.FailNow()
     }
 
-    defer hc.DiskDelete(newDisk.(map[string]interface{})["id"].(string))
-
+    mDisk = newDisk.(map[string]interface{})["id"].(string)
+    defer hc.DiskDelete(mDisk)
 
     //Actually, lets resize it to say 20 G
     diskMap = make(map[string]interface{})
     diskMap["size"] = 20
-    updatedDisk, err := hc.DiskResize(newDisk["id"].(string), diskMap)
+    updatedDisk, err := hc.DiskResize(mDisk, diskMap)
     if err != nil {
-        t.Fatalf("Failed to resize the new disk: \n%v", err)
+        t.Logf("Failed to resize the new disk: \n%v", err)
+        t.FailNow()
     }
 
+    //Now we need a boot disk for this instance
+    //Search all templates for a Ubuntu 16.10
+    var mTemplateId string
+    templates, err := hc.TemplateList()
+    if err != nil {
+        t.Logf("Failed to list all templates: \n%v", errs)
+        t.FailNow()
+    }
+
+    for _, t := range templates.([]interface{}) {
+        if t.(map[string]interface{})["name"].(string) == "Ubuntu 16.10" && t.(map[string]interface{})["region"].(map[string]interface{})["id"].(string) == mRegion {
+            mTemplateId = t.(map[string]interface{})["id"].(string)
+            break
+        }
+    }
+
+    if mTemplateId == nil {
+        t.Logf("Failed to get template id for Ubuntu 16.10 in SY3")
+        t.FailNow()
+    }
+
+    diskMap = make(map[string]interface{})
+    diskMap["name"] = "hypercloud-test-boot-disk"
+
+    var mBootDisk string
+    bootDisk, err := hc.DiskClone(mTemplateId, diskMap)
+    if err != nil {
+        t.Logf("Unable to clone the template: \n%v", err)
+        t.FailNow()
+    }
+
+    defer hc.DiskDelete(bootDisk.(map[string]interface{})["id"].(string))
+
+    //Now lets make a public/private IP for this guy
+
+    //Public IP
+    var mPubIp string
+    netMap = make(map[string]interface{})
+    netMap["region"] = mRegion
+    pubIp, err := hc.IPAddressCreate(netMap)
+    if err != nil {
+        t.Logf("Unable to allocate new public IP in SY3: \n%v", err)
+        t.FailNow()
+    }
+
+    mPubIp = pubIp.(map[string]interface{})["id"].(string)
+    defer hc.IPAddressDelete(mPubIp)
+
+    //Private IP
+    //Make a network adapter for this test
+    var mPrivIp string
+    var mNetAdapter string
+    netMap = make(map[string]interface{})
+    netMap["name"] = "hypercloud-test-network-adapter"
+    netMap["region"] = mRegion
+    netMap["specification"] = "10.6.9.0/24" //gonna delete it anyway
+
+    netAdapter, err := hc.NetworkCreate(netMap)
+    if err != nil {
+        t.Logf("Unable to create private network: \n%v", err)
+        t.FailNow()
+    }
+    mNetAdapter = netAdapter.(map[string]interface{}).["id"].(string)
+    defer hc.NetworkDelete(mNetAdapter)
+
+    // Make a private IP
+    netMap = make(map[string]interface{})
+    netMap["name"] = "hypercloud-test-private-ip"
+    netMap["network"] = mNetAdapter.(map[string]interface{})["id"].(string)
+
+    privIp := hc.IPAddressCreate(netMap)
+    if err != nil {
+        t.Logf("Unable to create private ip: \n%v", err)
+        t.FailNow()
+    }
+    mPrivIp = privIp.(map[string]interface{})["id"].(string)
+    defer hc.IPAddressDelete(mPrivIp)
 
     //Lets make a generic new instance in SY3
-    instanceMap = make(map[string]interface{})
+    var mInstance string
+
+    instanceMap := make(map[string]interface{})
     instanceMap["name"] = "hypercloud-test-instance"
     instanceMap["performance_tier"] = mInstanceTier
     instanceMap["region"] = mRegion
@@ -139,66 +227,39 @@ func TestHypercloud(t *testing.T){
 
     newInstance, err := hc.InstanceCreate(instanceMap)
     if err != nil {
-        t.Fatalf("Failed to create the new instance: \n%v", errs)
+        t.Logf("Failed to create the new instance: \n%v", errs)
+        t.FailNow()
     }
 
-    defer hc.InstanceDelete(newInstance.(map[string]interface{})["id"].(string))
+    mInstance = newInstance.(map[string]interface{})["id"].(string)
 
-    //Now we need a boot disk for this instance
-    //Search all templates for a Ubuntu 16.10
-    var mTemplateId string
-    templates, err := hc.TemplateList()
+    defer hc.InstanceDelete(mInstance)
+
+    //Attach disks/IP addresses to the guy
+    updateInstance = make(map[string]interface{})
+
+    updateInstance["disks"] = []string{mBootDisk, mDisk}
+    updateInstance["network_adapters"] = []interface{}
+    // Add the private IP
+    privateNetwork = make(map[string]interface{})
+    privateNetwork["network"] = privIp.(map[string]interface{})["network_id"].(string)
+    privateNetwork["ip_addresses"] = []string{mPrivIp}
+
+    updateInstance["network_adapters"] = append(updateInstance["network_adapters"], privateNetwork)
+
+    //Add the public IP
+    publicNetwork = make(map[string]interface{})
+    publicNetwork["network"] = pubIp.(map[string]interface{})["network_id"].(string)
+    publicNetwork["ip_addresses"] = []string{mPubIp}
+
+
+    //Call the update function
+    updateInstance["network_adapters"] = append(updateInstance["network_adapters"], publicNetwork)
+
+    newInstance, err = hc.InstanceUpdate(mInstance, updateInstance)
     if err != nil {
-        t.Fatalf("Failed to list all templates: \n%v", errs)
+        t.Logf("Unable to update instance: \n%v", err)
+        t.FailNow()
     }
-
-    for _, t := range templates.([]interface{}) {
-        if t.(map[string]interface{})["name"] == "Ubuntu 16.10" && t.(map[string]interface{})["region"].(map[string]interface{})["id"] == mRegion {
-            mTemplateId = t.(map[string]interface{})["id"]
-            break
-        }
-    }
-
-    if mTemplateId == nil {
-        t.Fatalf("Failed to get template id for Ubuntu 16.10 in SY3")
-    }
-
-    diskMap = make(map[string]interface{})
-    diskMap["name"] = "hypercloud-test-boot-disk"
-
-    bootDisk, err := hc.DiskClone(mTemplateId, diskMap)
-    if err != nil {
-        t.Fatalf("Unable to clone the template: \n%v", err)
-    }
-
-    defer hc.DiskDelete(bootDisk.(map[string]interface{})["id"])
-
-    //Now lets make a public/private IP for this guy
-
-    //Public IP
-    netMap = make(map[string]interface{})
-    netMap["region"] = mRegion
-    mPubIp, err = hc.IPAddressCreate(netMap)
-    if err != nil {
-        t.Fatalf("Unable to allocate new public IP in SY3: \n%v", err)
-    }
-
-    defer hc.IPAddressDelete(mPubIp.(map[string]interface{})["id"])
-
-    //Private IP
-    //Make a network adapter for this test
-    netMap = make(map[string]interface{})
-    netMap["name"] = "hypercloud-test-network-adapter"
-    netMap["region"] = mRegion
-    netMap["specification"] = "10.6.9.0/24" //gonna delete it anyway
-
-    mNetAdapter, err = hc.NetworkCreate(netMap)
-    if err != nil {
-        t.Fatalf("Unable to create private network: \n%v", err)
-    }
-
-    defer hc.NetworkDelete(mNetAdapter.(map[string]interface{})["id"])
-
-    netMap = make(map[string]interface{})
 }
 
