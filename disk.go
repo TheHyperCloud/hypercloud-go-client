@@ -28,8 +28,8 @@ func (h* hypercloud) DiskList() (ret interface{}, err []error) {
 //Adding resize to this as well
 func (h* hypercloud) DiskUpdate(diskId string, body interface{}) (ret interface{}, err []error) {
     dat := body.(map[string]interface{})
-    if val, ok := dat["size"]; val {
-        _, erro = h.DiskResize(diskSize, map[string]interface{}{"size": val})
+    if val, ok := dat["size"]; ok {
+        _, erro := h.DiskResize(diskId, map[string]interface{}{"size": val})
         if erro != nil {
             err = append(err, erro...)
         }

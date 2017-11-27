@@ -32,13 +32,9 @@ Have a duck:
 package hypercloud
 
 import (
-
-    "fmt"
     "os"
-    "strings"
     "testing"
-
-    hypercloud "bitbucket.org/mistarhee/hypercloud" //Replace with the official repo before making a PR
+    "time"
 )
 
 func TestHypercloud(t *testing.T){
@@ -46,7 +42,11 @@ func TestHypercloud(t *testing.T){
     access_key := os.Getenv("HC_ACCESS_KEY")
     secret_key := os.Getenv("HC_SECRET_KEY")
 
-    hc := hypercloud.NewHypercloud(base_url, access_key, secret_key)
+    hc, err := NewHypercloud(base_url, access_key, secret_key)
+    if err != nil {
+        t.Logf("Failed to create initial hypercloud object: \n%v", err)
+        t.FailNow()
+    }
 
     /* Lets start by grabbing all the data we need to create an instance */
 
@@ -58,8 +58,7 @@ func TestHypercloud(t *testing.T){
     }
 
     var mRegion string
-    mRegion = nil //uninit for "safety"
-    for _, region := range regions {
+    for _, region := range regions.([]interface{}) {
         //Find SY3
         reg := region.(map[string]interface{})
         if reg["code"].(string) == "SY3"{
@@ -68,7 +67,7 @@ func TestHypercloud(t *testing.T){
         }
     }
 
-    if mRegion == nil {
+    if mRegion == "" {
         t.Logf("Failed to get the region id for SY3")
         t.FailNow()
     }
@@ -77,7 +76,7 @@ func TestHypercloud(t *testing.T){
     var mInstanceTier string
     var mDiskTier string
 
-    instanceTiers, err := hc.PerformanceTierListInstances()
+    instanceTiers, err := hc.PerformanceTierListInstance()
     if err != nil {
         t.Logf("Error occurred in getting PerformanceTierListInstances: \n%v", errs)
         t.FailNow()
@@ -90,32 +89,32 @@ func TestHypercloud(t *testing.T){
         }
     }
 
-    if mInstanceTier == nil {
+    if mInstanceTier == "" {
         t.Logf("Failed to get the standard instance tier id for SY3")
         t.FailNow()
     }
 
-    diskTiers, err := hc.PerformanceTierListDisks()
+    diskTiers, err := hc.PerformanceTierListDisk()
     if err != nil {
         t.Logf("Error occurred in getting PerformanceTierListDisks: \n%v", errs)
         t.FailNow()
     }
 
     for _, dts := range diskTiers.([]interface{}) {
-        if dts.(map[string]interface{})["region"].(map[string]interface{})["id"].(string) = mRegion && dts.(map[string]interface{})["name"].(string) == "Standard" {
+        if dts.(map[string]interface{})["region"].(map[string]interface{})["id"].(string) == mRegion && dts.(map[string]interface{})["name"].(string) == "Standard" {
             mDiskTier = dts.(map[string]interface{})["id"].(string)
             break
         }
     }
 
-    if mDiskTier == nil {
+    if mDiskTier == "" {
         t.Logf("Failed to get the standard disk tier id for SY3")
         t.FailNow()
     }
 
     // Make a blank 10G disk of specified performance tier
     var mDisk string
-    diskMap = make(map[string]interface{})
+    diskMap := make(map[string]interface{})
     diskMap["name"] = "hypercloud-test-disk"
     diskMap["performance_tier"] = mDiskTier
     diskMap["region"] = mRegion
@@ -128,18 +127,60 @@ func TestHypercloud(t *testing.T){
 
     mDisk = newDisk.(map[string]interface{})["id"].(string)
     defer hc.DiskDelete(mDisk)
+    // Wait for resources to be up 
+    end := time.Now().Add(time.Duration(30) * time.Second)
+    for end.After(time.Now()){
+        diskInfo, err := hc.DiskInfo(mDisk)
+        if err != nil {
+            t.Logf("Failed to grab disk info: \n%v", err)
+            t.FailNow()
+        }
+        if diskInfo.(map[string]interface{})["state"] == "unattached" {
+            break
+        }
+    }
+    diskInfo, err := hc.DiskInfo(mDisk)
+    if err != nil {
+        t.Logf("Failed to grab disk info: \n%v", err)
+        t.FailNow()
+    }
+    if diskInfo.(map[string]interface{})["state"] != "unattached" {
+        t.Logf("Failed to create the new disk: \n(timeout)")
+        t.FailNow()
+    }
 
     //Actually, lets resize it to say 20 G
     diskMap = make(map[string]interface{})
     diskMap["size"] = 20
-    updatedDisk, err := hc.DiskResize(mDisk, diskMap)
+    _, err = hc.DiskResize(mDisk, diskMap)
     if err != nil {
         t.Logf("Failed to resize the new disk: \n%v", err)
         t.FailNow()
     }
+    // Wait for resources to be up 
+    end = time.Now().Add(time.Duration(30) * time.Second)
+    for end.After(time.Now()){
+        diskInfo, err := hc.DiskInfo(mDisk)
+        if err != nil {
+            t.Logf("Failed to grab disk info: \n%v", err)
+            t.FailNow()
+        }
+        if diskInfo.(map[string]interface{})["state"] == "unattached" {
+            break
+        }
+    }
+    diskInfo, err = hc.DiskInfo(mDisk)
+    if err != nil {
+        t.Logf("Failed to grab disk info: \n%v", err)
+        t.FailNow()
+    }
+    if diskInfo.(map[string]interface{})["state"] != "unattached" {
+        t.Logf("Failed to create the new disk: \n(timeout)")
+        t.FailNow()
+    }
 
     //Now we need a boot disk for this instance
-    //Search all templates for a Ubuntu 16.10
+    //Search all templates for a Ubuntu 16.04
     var mTemplateId string
     templates, err := hc.TemplateList()
     if err != nil {
@@ -148,34 +189,60 @@ func TestHypercloud(t *testing.T){
     }
 
     for _, t := range templates.([]interface{}) {
-        if t.(map[string]interface{})["name"].(string) == "Ubuntu 16.10" && t.(map[string]interface{})["region"].(map[string]interface{})["id"].(string) == mRegion {
+        if t.(map[string]interface{})["slug"].(string) == "ubuntu-16-04" && t.(map[string]interface{})["region"].(map[string]interface{})["id"].(string) == mRegion {
             mTemplateId = t.(map[string]interface{})["id"].(string)
             break
         }
     }
 
-    if mTemplateId == nil {
-        t.Logf("Failed to get template id for Ubuntu 16.10 in SY3")
+    if mTemplateId == "" {
+        t.Logf("Failed to get template id for Ubuntu 16.04 in SY3")
         t.FailNow()
     }
 
     diskMap = make(map[string]interface{})
     diskMap["name"] = "hypercloud-test-boot-disk"
+    diskMap["performance_tier"] = mDiskTier
+    diskMap["region"] = mRegion
+    diskMap["size"] = 10
+    diskMap["template"] = mTemplateId
 
     var mBootDisk string
-    bootDisk, err := hc.DiskClone(mTemplateId, diskMap)
+    bootDisk, err := hc.DiskCreate(diskMap)
     if err != nil {
-        t.Logf("Unable to clone the template: \n%v", err)
+        t.Logf("Unable to create the boot disk: \n%v", err)
+        t.FailNow()
+    }
+    mBootDisk = bootDisk.(map[string]interface{})["id"].(string)
+    // Wait for resources to be up 
+    end = time.Now().Add(time.Duration(30) * time.Second)
+    for end.After(time.Now()){
+        diskInfo, err := hc.DiskInfo(mBootDisk)
+        if err != nil {
+            t.Logf("Failed to grab disk info: \n%v", err)
+            t.FailNow()
+        }
+        if diskInfo.(map[string]interface{})["state"] == "unattached" {
+            break
+        }
+    }
+    diskInfo, err = hc.DiskInfo(mBootDisk)
+    if err != nil {
+        t.Logf("Failed to grab disk info: \n%v", err)
+        t.FailNow()
+    }
+    if diskInfo.(map[string]interface{})["state"] != "unattached" {
+        t.Logf("Failed to create the new disk: \n(timeout)")
         t.FailNow()
     }
 
-    defer hc.DiskDelete(bootDisk.(map[string]interface{})["id"].(string))
+    defer hc.DiskDelete(mBootDisk)
 
     //Now lets make a public/private IP for this guy
 
     //Public IP
     var mPubIp string
-    netMap = make(map[string]interface{})
+    netMap := make(map[string]interface{})
     netMap["region"] = mRegion
     pubIp, err := hc.IPAddressCreate(netMap)
     if err != nil {
@@ -184,6 +251,7 @@ func TestHypercloud(t *testing.T){
     }
 
     mPubIp = pubIp.(map[string]interface{})["id"].(string)
+
     defer hc.IPAddressDelete(mPubIp)
 
     //Private IP
@@ -200,15 +268,37 @@ func TestHypercloud(t *testing.T){
         t.Logf("Unable to create private network: \n%v", err)
         t.FailNow()
     }
-    mNetAdapter = netAdapter.(map[string]interface{}).["id"].(string)
+    mNetAdapter = netAdapter.(map[string]interface{})["id"].(string)
+
+    end = time.Now().Add(time.Duration(30) * time.Second)
+    for end.After(time.Now()){
+        adapInfo, err := hc.NetworkInfo(mNetAdapter)
+        if err != nil {
+            t.Logf("Failed to grab network adapter info: \n %v", err)
+            t.FailNow()
+        }
+        if adapInfo.(map[string]interface{})["state"] == "ready" {
+            break
+        }
+    }
+    adapInfo, err := hc.NetworkInfo(mNetAdapter)
+    if err != nil {
+        t.Logf("Failed to grab network info: \n%v")
+        t.FailNow()
+    }
+    if adapInfo.(map[string]interface{})["state"] != "ready" {
+        t.Logf("Failed to create new network adapter: \n(timeout)")
+        t.FailNow()
+    }
+
     defer hc.NetworkDelete(mNetAdapter)
 
     // Make a private IP
     netMap = make(map[string]interface{})
     netMap["name"] = "hypercloud-test-private-ip"
-    netMap["network"] = mNetAdapter.(map[string]interface{})["id"].(string)
+    netMap["network"] = mNetAdapter
 
-    privIp := hc.IPAddressCreate(netMap)
+    privIp, err := hc.IPAddressCreate(netMap)
     if err != nil {
         t.Logf("Unable to create private ip: \n%v", err)
         t.FailNow()
@@ -225,7 +315,7 @@ func TestHypercloud(t *testing.T){
     instanceMap["region"] = mRegion
     instanceMap["memory"] = 2048
 
-    newInstance, err := hc.InstanceCreate(instanceMap)
+    newInstance, err := hc.InstanceAssemble(instanceMap)
     if err != nil {
         t.Logf("Failed to create the new instance: \n%v", errs)
         t.FailNow()
@@ -233,28 +323,51 @@ func TestHypercloud(t *testing.T){
 
     mInstance = newInstance.(map[string]interface{})["id"].(string)
 
+    // Wait for resources to be up 
+    end = time.Now().Add(time.Duration(30) * time.Second)
+    for end.After(time.Now()){
+        instanceInfo, err := hc.InstanceInfo(mInstance)
+        if err != nil {
+            t.Logf("Failed to retrieve instance info: \n%v", err)
+            t.FailNow()
+        }
+        if instanceInfo.(map[string]interface{})["state"] == "stopped" {
+            break
+        }
+    }
+    instanceInfo, err := hc.InstanceInfo(mInstance)
+    if err != nil {
+        t.Logf("Failed to retrieve instance info: \n%v", err)
+        t.FailNow()
+    }
+    if instanceInfo.(map[string]interface{})["state"] != "stopped" {
+        t.Logf("Failed to create the new instance: \n(Timeout)")
+        t.FailNow()
+    }
+
     defer hc.InstanceDelete(mInstance)
 
     //Attach disks/IP addresses to the guy
-    updateInstance = make(map[string]interface{})
+    updateInstance := make(map[string]interface{})
 
     updateInstance["disks"] = []string{mBootDisk, mDisk}
-    updateInstance["network_adapters"] = []interface{}
+
+    var updateInstanceNA []interface{}
     // Add the private IP
-    privateNetwork = make(map[string]interface{})
+    privateNetwork := make(map[string]interface{})
     privateNetwork["network"] = privIp.(map[string]interface{})["network_id"].(string)
     privateNetwork["ip_addresses"] = []string{mPrivIp}
 
-    updateInstance["network_adapters"] = append(updateInstance["network_adapters"], privateNetwork)
+    updateInstanceNA = append(updateInstanceNA, privateNetwork)
 
     //Add the public IP
-    publicNetwork = make(map[string]interface{})
+    publicNetwork := make(map[string]interface{})
     publicNetwork["network"] = pubIp.(map[string]interface{})["network_id"].(string)
     publicNetwork["ip_addresses"] = []string{mPubIp}
-
+    updateInstanceNA = append(updateInstanceNA, publicNetwork)
 
     //Call the update function
-    updateInstance["network_adapters"] = append(updateInstance["network_adapters"], publicNetwork)
+    updateInstance["network_adapters"] = updateInstanceNA
 
     newInstance, err = hc.InstanceUpdate(mInstance, updateInstance)
     if err != nil {
