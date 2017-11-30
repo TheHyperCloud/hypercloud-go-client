@@ -51,26 +51,14 @@ func TestHypercloud(t *testing.T){
     /* Lets start by grabbing all the data we need to create an instance */
 
     //Get all regions, find the Sydney (SY3) region.
-    regions, errs := hc.RegionList()
+    var mRegion string
+    region, errs := hc.RegionInfo("SY3")
     if errs != nil {
         t.Logf("Error occurred in getting RegionList: \n%v", errs)
         t.FailNow()
     }
 
-    var mRegion string
-    for _, region := range regions.([]interface{}) {
-        //Find SY3
-        reg := region.(map[string]interface{})
-        if reg["code"].(string) == "SY3"{
-            mRegion = reg["id"].(string)
-            break
-        }
-    }
-
-    if mRegion == "" {
-        t.Logf("Failed to get the region id for SY3")
-        t.FailNow()
-    }
+    mRegion = region.(map[string]interface{})["id"].(string)
 
     // Lets grab the Standard performance tier for disks and instances in the SY3 region
     var mInstanceTier string
@@ -345,7 +333,7 @@ func TestHypercloud(t *testing.T){
         t.FailNow()
     }
 
-    defer hc.InstanceDelete(mInstance)
+    defer (func() {hc.InstanceDelete(mInstance); time.Sleep(5 * time.Second); return})()
 
     //Attach disks/IP addresses to the guy
     updateInstance := make(map[string]interface{})
